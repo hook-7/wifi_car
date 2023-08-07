@@ -1,0 +1,179 @@
+C51 COMPILER V9.52.0.0   MAIN                                                              04/09/2023 21:06:43 PAGE 1   
+
+
+C51 COMPILER V9.52.0.0, COMPILATION OF MODULE MAIN
+OBJECT MODULE PLACED IN main.OBJ
+COMPILER INVOKED BY: C:\Keil\C51\BIN\C51.EXE main.c BROWSE DEBUG OBJECTEXTEND TABS(2)
+
+line level    source
+
+   1          #include "reg52.h"
+   2          #include "intrins.h"
+   3          #include <string.h>
+   4          
+   5          
+   6          #define SIZE 12
+   7          sfr AUXR = 0x8E;
+   8          sbit D5 = P3^7;
+   9          sbit D6 = P3^6;
+  10          
+  11          char buffer[SIZE];
+  12          code char LJWL[]  = "AT+CWJAP=\"Call Me\",\"11946078\"\r\n"; //入网指令
+  13          code char LJFWQ[] = "AT+CIPSTART=\"TCP\",\"192.168.68.176\",8080\r\n"; //连接服务器指令
+  14          char TCMS[]  = "AT+CIPMODE=1\r\n";  //透传指令
+  15          char SJCS[]  = "AT+CIPSEND\r\n";  //数据传输开始指令
+  16          char RESET[] = "AT+RST\r\n";    //重启模块指令
+  17          char AT_OK_Flag = 0;        //OK返回值的标志位
+  18          char AT_Connect_Net_Flag = 0;   //WIFI GOT IP返回值的标志位
+  19           
+  20          void UartInit(void)   //9600bps@11.0592MHz
+  21          {
+  22   1        AUXR = 0x01;
+  23   1        SCON = 0x50; //配置串口工作方式1，REN使能接收
+  24   1        TMOD &= 0xF0;
+  25   1        TMOD |= 0x20;//定时器1工作方式位8位自动重装
+  26   1        
+  27   1        TH1 = 0xFD;
+  28   1        TL1 = 0xFD;//9600波特率的初值
+  29   1        TR1 = 1;//启动定时器
+  30   1        
+  31   1        EA = 1;//开启总中断
+  32   1        ES = 1;//开启串口中断
+  33   1      }
+  34          
+  35          void Delay1000ms()    //@11.0592MHz
+  36          {
+  37   1        unsigned char i, j, k;
+  38   1      
+  39   1        _nop_();
+  40   1        i = 8;
+  41   1        j = 1;
+  42   1        k = 243;
+  43   1        do
+  44   1        {
+  45   2          do
+  46   2          {
+  47   3            while (--k);
+  48   3          } while (--j);
+  49   2        } while (--i);
+  50   1      }
+  51          
+  52          void sendByte(char data_msg)
+  53          {
+  54   1        SBUF = data_msg;
+  55   1        while(!TI);
+C51 COMPILER V9.52.0.0   MAIN                                                              04/09/2023 21:06:43 PAGE 2   
+
+  56   1        TI = 0;
+  57   1      }
+  58          
+  59          void sendString(char* str)
+  60          {
+  61   1        while( *str != '\0'){
+  62   2          sendByte(*str);
+  63   2          str++;
+  64   2        }
+  65   1      }
+  66          
+  67          void main()
+  68          {
+  69   1        int mark = 0;
+  70   1        D5 = D6 = 1;//灭状态灯
+  71   1        //配置C51串口的通信方式
+  72   1        UartInit();
+  73   1        Delay1000ms();//给espwifi模块上电时间
+  74   1        
+  75   1        //发送联网AT指令并等待成功
+  76   1        sendString(LJWL);
+  77   1        //while(!AT_Connect_Net_Flag);
+  78   1        while(!AT_OK_Flag);
+  79   1        AT_OK_Flag = 0;
+  80   1        //发送连服务器指令并等待成功
+  81   1        sendString(LJFWQ);
+  82   1        while(!AT_OK_Flag);
+  83   1        AT_OK_Flag = 0;
+  84   1        //发送透传模式指令并等待成功
+  85   1        sendString(TCMS);
+  86   1        while(!AT_OK_Flag);
+  87   1        AT_OK_Flag = 0;
+  88   1        //发送数据传输指令并等待成功
+  89   1        sendString(SJCS);
+  90   1        while(!AT_OK_Flag);
+  91   1        
+  92   1        if(AT_Connect_Net_Flag){
+  93   2            D5 = 0;//点亮D5,代表入网成功
+  94   2        }
+  95   1        if(AT_OK_Flag){
+  96   2          D6 = 0;//点亮D6,代表连接服务器并打开透传模式成功
+  97   2        }
+  98   1        
+  99   1        while(1){
+ 100   2          Delay1000ms();
+ 101   2          //“心跳包”
+ 102   2          sendString("....\r\n");
+ 103   2        }
+ 104   1      }
+ 105          
+ 106          void Uart_Handler() interrupt 4
+ 107          {
+ 108   1        static int i = 0;//静态变量，被初始化一次
+ 109   1        char tmp;
+ 110   1      
+ 111   1        if(RI)//中断处理函数中，对于接收中断的响应
+ 112   1        {
+ 113   2            RI = 0;//清除接收中断标志位
+ 114   2            tmp = SBUF;
+ 115   2            if(tmp == 'W' || tmp == 'O' || tmp == 'L' || tmp == 'F'){
+ 116   3              i = 0;
+ 117   3            }
+C51 COMPILER V9.52.0.0   MAIN                                                              04/09/2023 21:06:43 PAGE 3   
+
+ 118   2            buffer[i++] = tmp;
+ 119   2            //入网成功的判断依据WIFI GOT IP
+ 120   2            if(buffer[0] == 'W' && buffer[5] == 'G'){
+ 121   3              AT_Connect_Net_Flag = 1;
+ 122   3              memset(buffer, '\0', SIZE);
+ 123   3            }
+ 124   2            //连接服务器等OK返回值指令的判断
+ 125   2            if(buffer[0] == 'O' && buffer[1] == 'K'){
+ 126   3              AT_OK_Flag  = 1;
+ 127   3              memset(buffer, '\0', SIZE);
+ 128   3            }
+ 129   2            //联网失败出现FAIL字样捕获
+ 130   2            if(buffer[0] == 'F' && buffer[1] == 'A'){
+ 131   3              for(i=0;i<5;i++){
+ 132   4                D5 = 0;
+ 133   4                Delay1000ms();
+ 134   4                D5 = 1;
+ 135   4                Delay1000ms();
+ 136   4              }
+ 137   3              sendString(RESET);
+ 138   3              memset(buffer, '\0', SIZE);
+ 139   3            }
+ 140   2            //灯控指令
+ 141   2            if(buffer[0] == 'L' && buffer[2] == '1'){
+ 142   3              D5 = 0;//点亮D5
+ 143   3              memset(buffer, '\0', SIZE);
+ 144   3            }
+ 145   2            if(buffer[0] == 'L' && buffer[2] == '0'){
+ 146   3              D5 = 1;//熄灭D5
+ 147   3              memset(buffer, '\0', SIZE);
+ 148   3            }
+ 149   2            if(i == 12) i = 0;
+ 150   2        }
+ 151   1          
+ 152   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    459    ----
+   CONSTANT SIZE    =     81    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =     53       2
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)
